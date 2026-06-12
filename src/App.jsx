@@ -1,10 +1,24 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import axios from 'axios'
 import {
+  AlertCircle,
   Check,
   CheckCircle2,
+  Apple,
+  Banana,
+  Beef,
+  Clock3,
+  Carrot,
   Copy,
+  Coffee,
   CreditCard,
+  Croissant,
+  CupSoda,
+  Fish,
+  Grape,
+  Milk,
   PackagePlus,
+  Popcorn,
   QrCode,
   ReceiptText,
   RefreshCcw,
@@ -12,6 +26,7 @@ import {
   ScanLine,
   ShoppingCart,
   Trash2,
+  Wheat,
   Wifi,
   X,
 } from 'lucide-react'
@@ -23,20 +38,95 @@ const BRL = new Intl.NumberFormat('pt-BR', {
   currency: 'BRL',
 })
 
-const PRODUCTS = [
-  { id: 1, name: 'Leite Integral', price: 6.49, quantity: 1, unit: 'un', category: 'Laticinios', color: '#eff8ff', accent: '#5d9cec', icon: 'LT' },
-  { id: 2, name: 'Pao de Forma', price: 9.9, quantity: 1, unit: 'un', category: 'Padaria', color: '#fff5dd', accent: '#d59632', icon: 'PA' },
-  { id: 3, name: 'Cafe Torrado', price: 18.75, quantity: 1, unit: 'un', category: 'Mercearia', color: '#f2ebe5', accent: '#7b4f35', icon: 'CF' },
-  { id: 4, name: 'Arroz Branco 5kg', price: 24.9, quantity: 1, unit: 'un', category: 'Mercearia', color: '#f4f6f0', accent: '#71816d', icon: 'AR' },
-  { id: 5, name: 'Suco de Uva 1L', price: 12.49, quantity: 1, unit: 'un', category: 'Bebidas', color: '#f4edff', accent: '#7b55c7', icon: 'SU' },
-  { id: 6, name: 'Queijo Mussarela', price: 18.9, quantity: 1, unit: 'un', category: 'Laticinios', color: '#fff8d8', accent: '#d7a800', icon: 'QJ' },
-  { id: 7, name: 'Maca Gala', price: 7.99, quantity: 0.1, unit: 'kg', soldByWeight: true, category: 'Hortifruti', color: '#ffecec', accent: '#d94a4a', icon: 'MG' },
-  { id: 8, name: 'Banana Prata', price: 5.99, quantity: 0.1, unit: 'kg', soldByWeight: true, category: 'Hortifruti', color: '#fff7d6', accent: '#c5a01e', icon: 'BN' },
-  { id: 9, name: 'Tomate Italiano', price: 8.49, quantity: 0.1, unit: 'kg', soldByWeight: true, category: 'Hortifruti', color: '#ffe8e6', accent: '#d13d31', icon: 'TM' },
-]
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const DEVICE_ID = import.meta.env.VITE_DEVICE_ID || 'SC-DISPLAY-01'
+
+const api = axios.create({
+  baseURL: API_URL,
+  headers: { 'Content-Type': 'application/json' },
+})
+
+const ICONS = {
+  Apple,
+  Banana,
+  Beef,
+  Carrot,
+  Coffee,
+  Croissant,
+  CupSoda,
+  Fish,
+  Grape,
+  Milk,
+  PackagePlus,
+  Popcorn,
+  Wheat,
+}
+
+function withIcon(item) {
+  return {
+    ...item,
+    icon: ICONS[item.icon] || PackagePlus,
+  }
+}
+
+function normalizeCart(cart) {
+  return (cart?.items ?? []).map((item) => withIcon({
+    ...item,
+    id: item.id,
+    productId: item.productId,
+  }))
+}
+
+function apiErrorMessage(error, fallback) {
+  return error?.response?.data?.error || error?.response?.data?.message || fallback
+}
 
 function createTransactionId() {
   return `SC-${Date.now().toString(36).toUpperCase()}`
+}
+
+function crc16(payload) {
+  let crc = 0xffff
+
+  for (let i = 0; i < payload.length; i += 1) {
+    crc ^= payload.charCodeAt(i) << 8
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1)
+    }
+  }
+
+  return (crc & 0xffff).toString(16).toUpperCase().padStart(4, '0')
+}
+
+function tlv(id, value) {
+  return `${id}${String(value.length).padStart(2, '0')}${value}`
+}
+
+function removeAccents(value) {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+}
+
+function generatePixPayload(value, transactionId) {
+  const pixKey = '11955238901'
+  const merchantName = removeAccents('Smartcart').slice(0, 25).toUpperCase()
+  const merchantCity = removeAccents('Joinville').slice(0, 15).toUpperCase()
+  const txid = transactionId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 25) || 'SMARTCART'
+  const merchantAccount = tlv('00', 'br.gov.bcb.pix') + tlv('01', pixKey)
+  const additionalData = tlv('05', txid)
+
+  const payload =
+    tlv('00', '01') +
+    tlv('26', merchantAccount) +
+    tlv('52', '0000') +
+    tlv('53', '986') +
+    tlv('54', Number(value).toFixed(2)) +
+    tlv('58', 'BR') +
+    tlv('59', merchantName) +
+    tlv('60', merchantCity) +
+    tlv('62', additionalData) +
+    '6304'
+
+  return payload + crc16(payload)
 }
 
 function luhn(value) {
@@ -77,15 +167,55 @@ function formatQuantity(product) {
   return `${product.quantity}x`
 }
 
+function formatHistoryQuantity(item) {
+  const quantity = Number(item.quantity)
+  if (item.unit === 'kg') {
+    return `${quantity.toLocaleString('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })} kg`
+  }
+
+  return `${quantity.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}x`
+}
+
+function statusLabel(status) {
+  const labels = {
+    active: 'Ativo',
+    paid: 'Pago',
+    cancelled: 'Cancelado',
+  }
+
+  return labels[status] || status
+}
+
 function ProductMark({ product }) {
+  const Icon = product.icon
+
   return (
     <span
       className="product-mark"
       style={{ background: product.color, color: product.accent }}
       aria-hidden="true"
     >
-      {product.icon}
+      <Icon size={26} strokeWidth={2.35} />
     </span>
+  )
+}
+
+function ToastStack({ toasts, onDismiss }) {
+  return (
+    <div className="toast-stack" aria-live="polite" aria-relevant="additions">
+      {toasts.map((toast) => (
+        <div key={toast.id} className={`toast ${toast.type}`}>
+          {toast.type === 'error' ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
+          <span>{toast.message}</span>
+          <button type="button" onClick={() => onDismiss(toast.id)} aria-label="Fechar notificacao">
+            <X size={15} />
+          </button>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -135,7 +265,9 @@ function SensorModal({ products, cartProducts, onAdd, onClose }) {
         </header>
         <div className="sensor-grid">
           {products.map((product) => {
-            const added = cartProducts.find((item) => item.id === product.id)?.quantity ?? 0
+            const added = cartProducts
+              .filter((item) => item.productId === product.id)
+              .reduce((total, item) => total + item.quantity, 0)
 
             return (
               <button key={product.id} type="button" className="sensor-product" onClick={() => onAdd(product)}>
@@ -218,14 +350,133 @@ function WeightModal({ products, onSubmit, onClose }) {
   )
 }
 
+function HistoryPanel({ sessions, orders, selectedHistory, loadingHistory, onRefresh, onOpenSession, onOpenOrder }) {
+  const PAGE_SIZE = 5
+  const recentOrders = orders.slice(0, 3)
+  const [sessionPage, setSessionPage] = useState(1)
+  const totalSessionPages = Math.max(1, Math.ceil(sessions.length / PAGE_SIZE))
+  const currentSessionPage = Math.min(sessionPage, totalSessionPages)
+  const visibleSessions = sessions.slice((currentSessionPage - 1) * PAGE_SIZE, currentSessionPage * PAGE_SIZE)
+
+  return (
+    <div className="history-grid">
+      <section className="history-panel">
+        <div className="panel-title">
+          <div>
+            <span>Historico do sistema</span>
+            <h2>Sessoes do carrinho</h2>
+          </div>
+          <button type="button" className="panel-icon-action" onClick={onRefresh} disabled={loadingHistory} aria-label="Atualizar historico">
+            <RefreshCcw size={18} className={loadingHistory ? 'spin-icon' : ''} />
+          </button>
+        </div>
+
+        {sessions.length ? (
+          <>
+            <div className="history-list">
+              {visibleSessions.map((session) => (
+                <button key={session.id} type="button" className="history-row" onClick={() => onOpenSession(session.id)}>
+                  <span className={`status-dot ${session.status}`} />
+                  <span>
+                    <strong>{session.deviceId}</strong>
+                    <small>Sessao #{session.id} - {statusLabel(session.status)}</small>
+                  </span>
+                  <b>{BRL.format(session.total)}</b>
+                </button>
+              ))}
+            </div>
+            <Pagination
+              page={currentSessionPage}
+              totalPages={totalSessionPages}
+              totalItems={sessions.length}
+              onPrev={() => setSessionPage((page) => Math.max(1, page - 1))}
+              onNext={() => setSessionPage((page) => Math.min(totalSessionPages, page + 1))}
+            />
+          </>
+        ) : (
+          <div className="empty-state compact">
+            <Clock3 size={40} />
+            <strong>Nenhuma sessao encontrada</strong>
+            <span>Use o carrinho para gerar historico.</span>
+          </div>
+        )}
+      </section>
+
+      <aside className="history-side">
+        <div className="summary-card">
+          <div className="summary-heading">
+            <ReceiptText size={18} />
+            <strong>Pedidos</strong>
+          </div>
+          <div className="order-list">
+            {recentOrders.length ? recentOrders.map((order) => (
+                <button key={order.id} type="button" className="order-row" onClick={() => onOpenOrder(order.id)}>
+                  <span>
+                    <strong>Pedido #{order.id}</strong>
+                    <small>{order.paymentMethod.toUpperCase()} - {statusLabel(order.status)}</small>
+                  </span>
+                  <b>{BRL.format(order.total)}</b>
+                </button>
+              )) : (
+              <p className="muted-copy">Nenhum pedido finalizado.</p>
+            )}
+          </div>
+          {orders.length > 3 && <p className="recent-note">Mostrando os 3 pedidos mais recentes.</p>}
+        </div>
+
+        <div className="summary-card history-detail">
+          <div className="summary-heading">
+            <ShoppingCart size={18} />
+            <strong>Detalhes</strong>
+          </div>
+          {selectedHistory ? (
+            <>
+              <p className="detail-kicker">{selectedHistory.type === 'order' ? `Pedido #${selectedHistory.id}` : `Sessao #${selectedHistory.session?.id}`}</p>
+              <div className="detail-items">
+                {(selectedHistory.items ?? []).map((item) => (
+                  <div key={`${item.id}-${item.productId}`} className="detail-item">
+                    <span>{item.name}</span>
+                    <strong>{formatHistoryQuantity(item)} - {BRL.format(item.subtotal)}</strong>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="muted-copy">Selecione uma sessao ou pedido para ver os itens.</p>
+          )}
+        </div>
+      </aside>
+    </div>
+  )
+}
+
+function Pagination({ page, totalPages, totalItems, onPrev, onNext }) {
+  return (
+    <div className="pagination">
+      <span>{totalItems} registros</span>
+      <div>
+        <button type="button" onClick={onPrev} disabled={page <= 1}>Anterior</button>
+        <strong>{page}/{totalPages}</strong>
+        <button type="button" onClick={onNext} disabled={page >= totalPages}>Proxima</button>
+      </div>
+    </div>
+  )
+}
+
 function App() {
-  const [cartProducts, setCartProducts] = useState([
-    { ...PRODUCTS[0], quantity: 2 },
-    { ...PRODUCTS[1], quantity: 1 },
-    { ...PRODUCTS[2], quantity: 1 },
-    { ...PRODUCTS[6], quantity: 0.85 },
-  ])
+  const [cartProducts, setCartProducts] = useState([])
+  const [products, setProducts] = useState([])
+  const [sessions, setSessions] = useState([])
+  const [orders, setOrders] = useState([])
+  const [selectedHistory, setSelectedHistory] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [loadingHistory, setLoadingHistory] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [order, setOrder] = useState(null)
+  const [toasts, setToasts] = useState([])
   const [screen, setScreen] = useState('cart')
+  const [reading, setReading] = useState(false)
+  const [generatingPix, setGeneratingPix] = useState(false)
   const [sensorOpen, setSensorOpen] = useState(false)
   const [weightOpen, setWeightOpen] = useState(false)
   const [payment, setPayment] = useState({
@@ -251,55 +502,148 @@ function App() {
 
   const pixPayload = useMemo(() => {
     const txid = payment.transactionId || 'SMARTCARTDISPLAY'
-    return `00020126330014BR.GOV.BCB.PIX011111955238901520400005303986540${totals.total.toFixed(2).length}${totals.total.toFixed(2)}5802BR5910SMARTCART6009JOINVILLE621405${txid.slice(0, 9)}6304`
+    return generatePixPayload(totals.total, txid)
   }, [payment.transactionId, totals.total])
+  const finalTotal = order?.total ?? totals.total
 
-  const sensorProducts = PRODUCTS.filter((product) => !product.soldByWeight)
-  const weightedProducts = PRODUCTS.filter((product) => product.soldByWeight)
   const cardIsValid = payment.cardName.trim().length >= 3
     && luhn(payment.cardNumber)
     && /^\d{2}\/\d{2}$/.test(payment.cardExpiry)
     && payment.cardCvv.length >= 3
 
-  function addProduct(product) {
-    setCartProducts((items) => {
-      const existing = items.find((item) => item.id === product.id)
-      if (existing) {
-        return items.map((item) => (
-          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
-        ))
+  const sensorProducts = products.filter((product) => !product.soldByWeight)
+  const weightedProducts = products.filter((product) => product.soldByWeight)
+
+  const loadHistory = useCallback(async () => {
+    setLoadingHistory(true)
+    try {
+      const [sessionsResponse, ordersResponse] = await Promise.all([
+        api.get('/sessions'),
+        api.get('/order'),
+      ])
+      setSessions(sessionsResponse.data.sessions ?? [])
+      setOrders(ordersResponse.data.orders ?? [])
+    } catch (error) {
+      notify('error', apiErrorMessage(error, 'Nao foi possivel carregar o historico.'))
+    } finally {
+      setLoadingHistory(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    async function loadDisplay() {
+      try {
+        const [productsResponse, cartResponse] = await Promise.all([
+          api.get('/product'),
+          api.get(`/cart/${DEVICE_ID}`),
+        ])
+
+        setProducts((productsResponse.data.products ?? []).map(withIcon))
+        setCartProducts(normalizeCart(cartResponse.data.cart))
+        loadHistory()
+      } catch (error) {
+        notify('error', apiErrorMessage(error, 'Nao foi possivel carregar o backend.'))
+      } finally {
+        setLoading(false)
       }
+    }
 
-      return [...items, { ...product, quantity: product.soldByWeight ? product.quantity : 1 }]
-    })
+    loadDisplay()
+  }, [loadHistory])
+
+  async function openSession(sessionId) {
+    try {
+      const response = await api.get(`/sessions/${sessionId}`)
+      setSelectedHistory({ type: 'session', ...response.data.cart })
+    } catch (error) {
+      notify('error', apiErrorMessage(error, 'Nao foi possivel abrir a sessao.'))
+    }
   }
 
-  function addWeightedProduct(product) {
-    setCartProducts((items) => {
-      const existing = items.find((item) => item.id === product.id)
-      if (existing) {
-        return items.map((item) => (
-          item.id === product.id ? { ...item, quantity: Number((item.quantity + product.quantity).toFixed(3)) } : item
-        ))
-      }
-
-      return [...items, product]
-    })
-    setWeightOpen(false)
+  async function openOrder(orderId) {
+    try {
+      const response = await api.get(`/order/${orderId}`)
+      setSelectedHistory({ type: 'order', ...response.data.order })
+    } catch (error) {
+      notify('error', apiErrorMessage(error, 'Nao foi possivel abrir o pedido.'))
+    }
   }
 
-  function removeProduct(productId) {
-    setCartProducts((items) => items.filter((item) => item.id !== productId))
+  function notify(type, message) {
+    const id = `${Date.now()}-${Math.random()}`
+    setToasts((items) => [...items, { id, type, message }].slice(-4))
+    window.setTimeout(() => {
+      setToasts((items) => items.filter((toast) => toast.id !== id))
+    }, 3400)
   }
 
-  function resetDemo() {
-    setCartProducts([
-      { ...PRODUCTS[0], quantity: 2 },
-      { ...PRODUCTS[1], quantity: 1 },
-      { ...PRODUCTS[2], quantity: 1 },
-      { ...PRODUCTS[6], quantity: 0.85 },
-    ])
+  function dismissToast(id) {
+    setToasts((items) => items.filter((toast) => toast.id !== id))
+  }
+
+  async function addProduct(product, options = {}) {
+    if (saving) return
+    setSaving(true)
+
+    try {
+      const response = await api.post(`/cart/${DEVICE_ID}/item`, {
+        product_id: product.id,
+        quantity: 1,
+        source: 'sensor',
+      })
+      setCartProducts(normalizeCart(response.data.cart))
+      if (!options.silent) notify('success', response.data.message || `${product.name} adicionado ao carrinho.`)
+    } catch (error) {
+      notify('error', apiErrorMessage(error, 'Nao foi possivel adicionar o produto.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function addWeightedProduct(product, options = {}) {
+    if (saving) return
+    setSaving(true)
+
+    try {
+      const response = await api.post(`/cart/${DEVICE_ID}/item`, {
+        product_id: product.id,
+        weight: product.quantity,
+        source: 'scale',
+      })
+      setCartProducts(normalizeCart(response.data.cart))
+      setWeightOpen(false)
+      if (!options.silent) notify('success', `${product.name} adicionado com ${formatQuantity(product)}.`)
+    } catch (error) {
+      notify('error', apiErrorMessage(error, 'Nao foi possivel adicionar o item pesado.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function removeProduct(itemId) {
+    const product = cartProducts.find((item) => item.id === itemId)
+
+    try {
+      const response = await api.delete(`/cart/${DEVICE_ID}/item/${itemId}`)
+      setCartProducts(normalizeCart(response.data.cart))
+      if (product) notify('success', `${product.name} removido.`)
+    } catch (error) {
+      notify('error', apiErrorMessage(error, 'Nao foi possivel remover o item.'))
+    }
+  }
+
+  async function resetDemo() {
+    try {
+      const response = await api.delete(`/cart/${DEVICE_ID}`)
+      setCartProducts(normalizeCart(response.data.cart))
+      notify('success', response.data.message || 'Carrinho reiniciado.')
+      loadHistory()
+    } catch (error) {
+      notify('error', apiErrorMessage(error, 'Nao foi possivel reiniciar o carrinho.'))
+    }
+
     setScreen('cart')
+    setOrder(null)
     setPayment({
       method: 'pix',
       pixReady: false,
@@ -310,28 +654,112 @@ function App() {
       cardCvv: '',
       transactionId: '',
     })
+    setGeneratingPix(false)
   }
 
   function goToPayment() {
-    if (!cartProducts.length) return
+    if (!cartProducts.length) {
+      notify('error', 'Adicione pelo menos um produto antes do pagamento.')
+      return
+    }
     setScreen('payment')
+  }
+
+  function simulateRead() {
+    if (reading) {
+      notify('error', 'A leitura automatica ja esta em andamento.')
+      return
+    }
+
+    setReading(true)
+    notify('success', 'Leitura automatica iniciada.')
+
+    window.setTimeout(async () => {
+      try {
+        const response = await api.post(`/cart/${DEVICE_ID}/scan`)
+        const added = response.data.added ? withIcon(response.data.added) : null
+        setCartProducts(normalizeCart(response.data.cart))
+
+        if (added?.soldByWeight) {
+          notify('success', `Leitura simulada: ${added.name} com ${added.quantity.toLocaleString('pt-BR')} kg.`)
+        } else if (added) {
+          notify('success', `Leitura simulada: ${added.name} detectado.`)
+        } else {
+          notify('success', response.data.message || 'Leitura simulada salva.')
+        }
+      } catch (error) {
+        notify('error', apiErrorMessage(error, 'Nao foi possivel simular a leitura.'))
+      } finally {
+        setReading(false)
+      }
+    }, 1000)
   }
 
   function confirmPayment(event) {
     event.preventDefault()
 
-    if (payment.method === 'pix' && !payment.pixReady) {
-      setPayment((current) => ({ ...current, pixReady: true, transactionId: createTransactionId() }))
+    if (!cartProducts.length) {
+      notify('error', 'Carrinho vazio. Simule uma leitura antes de pagar.')
       return
     }
 
-    if (payment.method === 'card' && !cardIsValid) return
-    setScreen('confirmation')
+    if (payment.method === 'pix' && !payment.pixReady) {
+      if (generatingPix) {
+        notify('error', 'O QR Code PIX ja esta sendo gerado.')
+        return
+      }
+
+      setGeneratingPix(true)
+      notify('success', 'Gerando QR Code PIX.')
+      window.setTimeout(() => {
+        setPayment((current) => ({ ...current, pixReady: true, transactionId: createTransactionId() }))
+        setGeneratingPix(false)
+        notify('success', 'QR Code PIX gerado com sucesso.')
+      }, 1000)
+      return
+    }
+
+    if (payment.method === 'card' && !cardIsValid) {
+      notify('error', 'Preencha um cartao valido para finalizar.')
+      return
+    }
+    finalizeCheckout('card', payment.transactionId || createTransactionId())
   }
 
   function copyPix() {
     navigator.clipboard?.writeText(pixPayload)
     setPayment((current) => ({ ...current, copied: true }))
+    notify('success', 'Codigo PIX copiado.')
+  }
+
+  async function finishPixPayment() {
+    if (!payment.pixReady) {
+      notify('error', 'Gere o QR Code PIX antes de confirmar o pagamento.')
+      return
+    }
+
+    await finalizeCheckout('pix', payment.transactionId || createTransactionId())
+  }
+
+  async function finalizeCheckout(method, transactionId) {
+    if (saving) return
+    setSaving(true)
+
+    try {
+      const response = await api.post(`/cart/${DEVICE_ID}/checkout`, {
+        method,
+        transaction_id: transactionId,
+      })
+      setOrder(response.data.order)
+      setCartProducts(normalizeCart(response.data.order ? { items: response.data.order.items } : null))
+      setScreen('confirmation')
+      notify('success', response.data.message || 'Compra finalizada e salva.')
+      loadHistory()
+    } catch (error) {
+      notify('error', apiErrorMessage(error, 'Nao foi possivel finalizar a compra.'))
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -350,14 +778,17 @@ function App() {
             </div>
             <div className="connection-pill">
               <Wifi size={15} />
-              Carrinho SC-04 online
+              Carrinho {DEVICE_ID} online
             </div>
           </header>
 
-          <nav className="tabs" aria-label="Paginas do display">
-            <DisplayTab active={screen === 'cart'} icon={<ShoppingCart size={16} />} label="Carrinho" onClick={() => setScreen('cart')} />
-            <DisplayTab active={screen === 'payment'} icon={<CreditCard size={16} />} label="Pagamento" onClick={goToPayment} />
-          </nav>
+          {screen !== 'confirmation' && (
+            <nav className="tabs" aria-label="Paginas do display">
+              <DisplayTab active={screen === 'cart'} icon={<ShoppingCart size={16} />} label="Carrinho" onClick={() => setScreen('cart')} />
+              <DisplayTab active={screen === 'payment'} icon={<CreditCard size={16} />} label="Pagamento" onClick={goToPayment} />
+              <DisplayTab active={screen === 'history'} icon={<Clock3 size={16} />} label="Historico" onClick={() => { setScreen('history'); loadHistory() }} />
+            </nav>
+          )}
 
           {screen === 'cart' && (
             <div className="screen-grid">
@@ -370,7 +801,13 @@ function App() {
                   <ScanLine size={22} />
                 </div>
 
-                {cartProducts.length ? (
+                {loading ? (
+                  <div className="empty-state">
+                    <RefreshCcw size={44} className="spin-icon" />
+                    <strong>Conectando ao backend</strong>
+                    <span>Carregando produtos e sessao do carrinho.</span>
+                  </div>
+                ) : cartProducts.length ? (
                   <ul className="cart-list">
                     {cartProducts.map((product) => (
                       <CartItem key={product.id} product={product} onRemove={removeProduct} />
@@ -388,11 +825,15 @@ function App() {
               <aside className="side-panel">
                 <div className="sensor-card">
                   <span>Entrada de produtos</span>
-                  <button type="button" onClick={() => setSensorOpen(true)}>
+                  <button type="button" className="simulation-action" onClick={simulateRead} disabled={reading || loading || saving}>
+                    {reading ? <RefreshCcw size={17} className="spin-icon" /> : <ScanLine size={17} />}
+                    {reading ? 'Lendo sensor...' : 'Simular leitura'}
+                  </button>
+                  <button type="button" onClick={() => setSensorOpen(true)} disabled={loading || saving || sensorProducts.length === 0}>
                     <PackagePlus size={17} />
                     Adicionar por sensor
                   </button>
-                  <button type="button" onClick={() => setWeightOpen(true)}>
+                  <button type="button" onClick={() => setWeightOpen(true)} disabled={loading || saving || weightedProducts.length === 0}>
                     <Scale size={17} />
                     Adicionar por peso
                   </button>
@@ -411,7 +852,7 @@ function App() {
                     <span>Total</span>
                     <strong>{BRL.format(totals.total)}</strong>
                   </div>
-                  <button type="button" className="primary-action" onClick={goToPayment} disabled={!cartProducts.length}>
+                  <button type="button" className="primary-action" onClick={goToPayment} aria-disabled={!cartProducts.length}>
                     <CreditCard size={17} />
                     Ir para pagamento
                   </button>
@@ -513,18 +954,37 @@ function App() {
                   <strong>{BRL.format(totals.total)}</strong>
                 </div>
                 {payment.method === 'pix' && payment.pixReady ? (
-                  <button type="button" className="primary-action" onClick={() => setScreen('confirmation')}>
+                  <button type="button" className="primary-action" onClick={finishPixPayment}>
                     <CheckCircle2 size={17} />
                     Ja paguei
                   </button>
                 ) : (
-                  <button type="submit" className="primary-action" disabled={payment.method === 'card' && !cardIsValid}>
-                    <CheckCircle2 size={17} />
-                    {payment.method === 'pix' ? 'Gerar QR Code' : 'Finalizar pedido'}
+                  <button
+                    type="submit"
+                    className="primary-action"
+                    aria-disabled={(payment.method === 'card' && !cardIsValid) || generatingPix}
+                    disabled={generatingPix}
+                  >
+                    {generatingPix ? <RefreshCcw size={17} className="spin-icon" /> : <CheckCircle2 size={17} />}
+                    {payment.method === 'pix'
+                      ? (generatingPix ? 'Gerando PIX...' : 'Gerar QR Code')
+                      : 'Finalizar pedido'}
                   </button>
                 )}
               </aside>
             </form>
+          )}
+
+          {screen === 'history' && (
+            <HistoryPanel
+              sessions={sessions}
+              orders={orders}
+              selectedHistory={selectedHistory}
+              loadingHistory={loadingHistory}
+              onRefresh={loadHistory}
+              onOpenSession={openSession}
+              onOpenOrder={openOrder}
+            />
           )}
 
           {screen === 'confirmation' && (
@@ -532,7 +992,7 @@ function App() {
               <CheckCircle2 size={62} />
               <span>Pagamento aprovado</span>
               <h2>Compra concluida</h2>
-              <p>{BRL.format(totals.total)} registrado no carrinho SC-04.</p>
+              <p>{BRL.format(finalTotal)} registrado no carrinho {DEVICE_ID}.</p>
               <button type="button" className="primary-action" onClick={resetDemo}>
                 <RefreshCcw size={17} />
                 Nova compra
@@ -556,6 +1016,8 @@ function App() {
               onClose={() => setWeightOpen(false)}
             />
           )}
+
+          <ToastStack toasts={toasts} onDismiss={dismissToast} />
         </div>
       </section>
     </main>

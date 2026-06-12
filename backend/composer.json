@@ -1,0 +1,10 @@
+{
+  "name": "smartcart/display-backend",
+  "description": "SmartCart display API in pure PHP",
+  "type": "project",
+  "require": {
+    "php": "^8.2",
+    "ext-pdo": "*",
+    "ext-pdo_mysql": "*"
+  }
+}
