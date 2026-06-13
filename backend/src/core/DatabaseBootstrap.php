@@ -10,7 +10,6 @@ class DatabaseBootstrap
         }
 
         self::seedProductsIfEmpty($db);
-        self::seedDemoHistoryIfEmpty($db);
     }
 
     private static function seedProductsIfEmpty(PDO $db): void
@@ -26,112 +25,6 @@ class DatabaseBootstrap
         foreach (self::seedProducts() as $product) {
             $stmt->execute($product);
         }
-    }
-
-    private static function seedDemoHistoryIfEmpty(PDO $db): void
-    {
-        $sessionCount = (int) $db->query('SELECT COUNT(*) FROM cart_sessions')->fetchColumn();
-        if ($sessionCount > 0) return;
-
-        $products = self::productsByName($db);
-
-        self::createDemoPaidCart($db, 'SC-01', 'pix', 'SC-DEMO-PIX-001', [
-            ['name' => 'Leite Integral', 'quantity' => 2.0, 'source' => 'sensor'],
-            ['name' => 'Pao de Forma', 'quantity' => 1.0, 'source' => 'sensor'],
-            ['name' => 'Maca Gala', 'quantity' => 0.85, 'source' => 'scale'],
-        ], $products);
-
-        self::createDemoPaidCart($db, 'SC-02', 'card', 'SC-DEMO-CARD-002', [
-            ['name' => 'Arroz Branco 5kg', 'quantity' => 1.0, 'source' => 'sensor'],
-            ['name' => 'Cafe Torrado', 'quantity' => 1.0, 'source' => 'sensor'],
-            ['name' => 'Banana Prata', 'quantity' => 1.24, 'source' => 'scale'],
-            ['name' => 'Suco de Uva 1L', 'quantity' => 2.0, 'source' => 'sensor'],
-        ], $products);
-
-        self::createDemoActiveCart($db, 'SC-04', [
-            ['name' => 'Queijo Mussarela', 'quantity' => 1.0, 'source' => 'sensor'],
-            ['name' => 'Tomate Italiano', 'quantity' => 0.64, 'source' => 'scale'],
-        ], $products);
-    }
-
-    private static function productsByName(PDO $db): array
-    {
-        $rows = $db->query('SELECT id, name, price FROM products')->fetchAll();
-        $products = [];
-
-        foreach ($rows as $row) {
-            $products[$row['name']] = [
-                'id' => (int) $row['id'],
-                'price' => (float) $row['price'],
-            ];
-        }
-
-        return $products;
-    }
-
-    private static function createDemoPaidCart(PDO $db, string $deviceId, string $method, string $transactionId, array $items, array $products): void
-    {
-        $sessionId = self::createSession($db, $deviceId, 'active');
-        $total = self::insertCartItems($db, $sessionId, $items, $products);
-
-        $orderStmt = $db->prepare('
-            INSERT INTO orders (session_id, device_id, payment_method, transaction_id, status, total)
-            VALUES (?, ?, ?, ?, "paid", ?)
-        ');
-        $orderStmt->execute([$sessionId, $deviceId, $method, $transactionId, $total]);
-        $orderId = (int) $db->lastInsertId();
-
-        $orderItemStmt = $db->prepare('
-            INSERT INTO order_items (order_id, product_id, quantity, unit_price, subtotal)
-            VALUES (?, ?, ?, ?, ?)
-        ');
-
-        foreach ($items as $item) {
-            $product = $products[$item['name']];
-            $subtotal = round($product['price'] * (float) $item['quantity'], 2);
-            $orderItemStmt->execute([$orderId, $product['id'], $item['quantity'], $product['price'], $subtotal]);
-        }
-
-        $paidSession = $db->prepare('UPDATE cart_sessions SET status = "paid", total = ? WHERE id = ?');
-        $paidSession->execute([$total, $sessionId]);
-    }
-
-    private static function createDemoActiveCart(PDO $db, string $deviceId, array $items, array $products): void
-    {
-        $sessionId = self::createSession($db, $deviceId, 'active');
-        $total = self::insertCartItems($db, $sessionId, $items, $products);
-
-        $stmt = $db->prepare('UPDATE cart_sessions SET total = ? WHERE id = ?');
-        $stmt->execute([$total, $sessionId]);
-    }
-
-    private static function createSession(PDO $db, string $deviceId, string $status): int
-    {
-        $stmt = $db->prepare('INSERT INTO cart_sessions (device_id, status) VALUES (?, ?)');
-        $stmt->execute([$deviceId, $status]);
-        return (int) $db->lastInsertId();
-    }
-
-    private static function insertCartItems(PDO $db, int $sessionId, array $items, array $products): float
-    {
-        $stmt = $db->prepare('
-            INSERT INTO cart_items (session_id, product_id, quantity, unit_price, subtotal, source)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ');
-
-        $total = 0.0;
-        foreach ($items as $item) {
-            if (!isset($products[$item['name']])) continue;
-
-            $product = $products[$item['name']];
-            $quantity = (float) $item['quantity'];
-            $subtotal = round($product['price'] * $quantity, 2);
-            $total += $subtotal;
-
-            $stmt->execute([$sessionId, $product['id'], $quantity, $product['price'], $subtotal, $item['source']]);
-        }
-
-        return round($total, 2);
     }
 
     private static function seedProducts(): array

@@ -186,7 +186,9 @@ button {
 .cart-list {
   list-style: none;
   display: grid;
+  align-content: start;
   gap: 12px;
+  min-height: 348px;
   margin: 0;
   padding: 0;
 }
@@ -588,11 +590,17 @@ button {
 .weight-products {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
   gap: 10px;
+}
+
+.sensor-grid {
+  min-height: 326px;
 }
 
 .sensor-product,
 .weight-product {
+  position: relative;
   min-width: 0;
   min-height: 74px;
   display: grid;
@@ -605,6 +613,20 @@ button {
   color: #fff;
   padding: 10px;
   text-align: left;
+}
+
+.sensor-product.selected {
+  border-color: #d4e84a;
+  background: #fff;
+}
+
+.sensor-product.selected strong,
+.sensor-product.selected b {
+  color: #12381f;
+}
+
+.sensor-product.selected small {
+  color: #18572c;
 }
 
 .sensor-product small,
@@ -640,6 +662,39 @@ button {
 
 .weight-product.selected small {
   color: #18572c;
+}
+
+.modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin-top: 16px;
+  padding-top: 14px;
+}
+
+.modal-actions span {
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.modal-actions button {
+  min-width: 132px;
+  height: 42px;
+  border: 0;
+  border-radius: 999px;
+  background: #d4e84a;
+  color: #0d2617;
+  font-size: 13px;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.modal-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
 }
 
 .weight-input {
@@ -709,14 +764,15 @@ button {
 }
 
 .toast {
+  position: relative;
   min-height: 54px;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 11px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 16px;
-  padding: 11px 12px;
+  padding: 14px 46px 14px 12px;
   color: #fff;
   box-shadow: 0 22px 48px -28px rgba(0, 0, 0, 0.9);
   pointer-events: auto;
@@ -730,12 +786,20 @@ button {
   background: rgba(90, 22, 22, 0.96);
 }
 
+.toast.confirm {
+  background: rgba(22, 48, 67, 0.96);
+}
+
 .toast.success svg:first-child {
   color: #d4e84a;
 }
 
 .toast.error svg:first-child {
   color: #ffb3b3;
+}
+
+.toast.confirm svg:first-child {
+  color: #d4e84a;
 }
 
 .toast span {
@@ -754,6 +818,37 @@ button {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
   cursor: pointer;
+}
+
+.toast-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  grid-column: 2;
+}
+
+.toast-actions button {
+  width: auto;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: #d4e84a;
+  color: #0d2617;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.toast-actions button.ghost {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.toast-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
 }
 
 .history-list,
@@ -891,6 +986,10 @@ button {
 
 .summary-card .pagination {
   color: #6d7280;
+}
+
+.cart-pagination {
+  min-height: 36px;
 }
 
 .pagination > div {

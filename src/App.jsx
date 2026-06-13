@@ -40,6 +40,7 @@ const BRL = new Intl.NumberFormat('pt-BR', {
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 const DEVICE_ID = import.meta.env.VITE_DEVICE_ID || 'SC-DISPLAY-01'
+const CART_PAGE_SIZE = 4
 
 const api = axios.create({
   baseURL: API_URL,
@@ -208,9 +209,18 @@ function ToastStack({ toasts, onDismiss }) {
     <div className="toast-stack" aria-live="polite" aria-relevant="additions">
       {toasts.map((toast) => (
         <div key={toast.id} className={`toast ${toast.type}`}>
-          {toast.type === 'error' ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
+          {toast.type === 'error' || toast.type === 'confirm' ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
           <span>{toast.message}</span>
-          <button type="button" onClick={() => onDismiss(toast.id)} aria-label="Fechar notificacao">
+          {toast.actions?.length > 0 && (
+            <div className="toast-actions">
+              {toast.actions.map((action) => (
+                <button key={action.label} type="button" className={action.variant || ''} onClick={action.onClick}>
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <button type="button" className="toast-close" onClick={() => onDismiss(toast.id)} aria-label="Fechar notificacao">
             <X size={15} />
           </button>
         </div>
@@ -250,7 +260,27 @@ function DisplayTab({ active, icon, label, onClick }) {
   )
 }
 
-function SensorModal({ products, cartProducts, onAdd, onClose }) {
+function SensorModal({ products, cartProducts, onConfirm, onClose, saving }) {
+  const [selectedQuantities, setSelectedQuantities] = useState({})
+  const selectedProducts = products.flatMap((product) => (
+    selectedQuantities[product.id]
+      ? [{ ...product, selectedQuantity: selectedQuantities[product.id] }]
+      : []
+  ))
+  const selectedTotal = selectedProducts.reduce((total, product) => total + product.selectedQuantity, 0)
+
+  function increaseProduct(productId) {
+    setSelectedQuantities((items) => ({
+      ...items,
+      [productId]: (items[productId] ?? 0) + 1,
+    }))
+  }
+
+  function handleConfirm() {
+    if (selectedTotal === 0) return
+    onConfirm(selectedProducts)
+  }
+
   return (
     <div className="modal-shell" role="dialog" aria-modal="true" aria-labelledby="sensor-title">
       <div className="modal">
@@ -268,19 +298,32 @@ function SensorModal({ products, cartProducts, onAdd, onClose }) {
             const added = cartProducts
               .filter((item) => item.productId === product.id)
               .reduce((total, item) => total + item.quantity, 0)
+            const selectedQuantity = selectedQuantities[product.id] ?? 0
 
             return (
-              <button key={product.id} type="button" className="sensor-product" onClick={() => onAdd(product)}>
+              <button
+                key={product.id}
+                type="button"
+                className={`sensor-product ${selectedQuantity ? 'selected' : ''}`}
+                onClick={() => increaseProduct(product.id)}
+                aria-pressed={selectedQuantity > 0}
+              >
                 <ProductMark product={product} />
                 <span>
                   <strong>{product.name}</strong>
-                  <small>{added ? `${added} no carrinho` : product.category}</small>
+                  <small>{selectedQuantity ? `${selectedQuantity}x selecionado` : added ? `${added} no carrinho` : product.category}</small>
                 </span>
                 <b>{BRL.format(product.price)}</b>
               </button>
             )
           })}
         </div>
+        <footer className="modal-actions">
+          <span>{selectedTotal} selecionado{selectedTotal === 1 ? '' : 's'}</span>
+          <button type="button" onClick={handleConfirm} disabled={saving || selectedTotal === 0}>
+            Confirmar
+          </button>
+        </footer>
       </div>
     </div>
   )
@@ -450,10 +493,10 @@ function HistoryPanel({ sessions, orders, selectedHistory, loadingHistory, onRef
   )
 }
 
-function Pagination({ page, totalPages, totalItems, onPrev, onNext }) {
+function Pagination({ page, totalPages, totalItems, onPrev, onNext, label = 'registros', className = '' }) {
   return (
-    <div className="pagination">
-      <span>{totalItems} registros</span>
+    <div className={`pagination ${className}`}>
+      <span>{totalItems} {label}</span>
       <div>
         <button type="button" onClick={onPrev} disabled={page <= 1}>Anterior</button>
         <strong>{page}/{totalPages}</strong>
@@ -475,6 +518,7 @@ function App() {
   const [order, setOrder] = useState(null)
   const [toasts, setToasts] = useState([])
   const [screen, setScreen] = useState('cart')
+  const [cartPage, setCartPage] = useState(1)
   const [reading, setReading] = useState(false)
   const [generatingPix, setGeneratingPix] = useState(false)
   const [sensorOpen, setSensorOpen] = useState(false)
@@ -513,6 +557,9 @@ function App() {
 
   const sensorProducts = products.filter((product) => !product.soldByWeight)
   const weightedProducts = products.filter((product) => product.soldByWeight)
+  const totalCartPages = Math.max(1, Math.ceil(cartProducts.length / CART_PAGE_SIZE))
+  const currentCartPage = Math.min(cartPage, totalCartPages)
+  const visibleCartProducts = cartProducts.slice((currentCartPage - 1) * CART_PAGE_SIZE, currentCartPage * CART_PAGE_SIZE)
 
   const loadHistory = useCallback(async () => {
     setLoadingHistory(true)
@@ -569,32 +616,82 @@ function App() {
     }
   }
 
-  function notify(type, message) {
+  function notify(type, message, options = {}) {
     const id = `${Date.now()}-${Math.random()}`
-    setToasts((items) => [...items, { id, type, message }].slice(-4))
-    window.setTimeout(() => {
-      setToasts((items) => items.filter((toast) => toast.id !== id))
-    }, 3400)
+    setToasts((items) => [...items, { id, type, message, actions: options.actions }].slice(-4))
+    if (!options.persist) {
+      window.setTimeout(() => {
+        setToasts((items) => items.filter((toast) => toast.id !== id))
+      }, 3400)
+    }
   }
 
   function dismissToast(id) {
     setToasts((items) => items.filter((toast) => toast.id !== id))
   }
 
-  async function addProduct(product, options = {}) {
+  function closeSensorModal() {
+    setSensorOpen(false)
+    setToasts((items) => items.filter((toast) => toast.context !== 'sensor'))
+  }
+
+  function confirmSensorProducts(productsToAdd) {
+    if (productsToAdd.length === 0) {
+      notify('error', 'Selecione pelo menos um produto.')
+      return
+    }
+
+    const id = `${Date.now()}-${Math.random()}`
+    const productCount = productsToAdd.reduce((total, product) => total + product.selectedQuantity, 0)
+    const message = `Deseja adicionar ${productCount} ${productCount === 1 ? 'item selecionado' : 'itens selecionados'} ao carrinho?`
+
+    setToasts((items) => [
+      ...items,
+      {
+        id,
+        type: 'confirm',
+        context: 'sensor',
+        message,
+        actions: [
+          {
+            label: 'Cancelar',
+            variant: 'ghost',
+            onClick: () => dismissToast(id),
+          },
+          {
+            label: 'Adicionar',
+            onClick: () => {
+              dismissToast(id)
+              addSensorProducts(productsToAdd)
+            },
+          },
+        ],
+      },
+    ].slice(-4))
+  }
+
+  async function addSensorProducts(productsToAdd) {
     if (saving) return
     setSaving(true)
 
     try {
-      const response = await api.post(`/cart/${DEVICE_ID}/item`, {
-        product_id: product.id,
-        quantity: 1,
-        source: 'sensor',
-      })
-      setCartProducts(normalizeCart(response.data.cart))
-      if (!options.silent) notify('success', response.data.message || `${product.name} adicionado ao carrinho.`)
+      let latestCart = null
+
+      for (const product of productsToAdd) {
+        const response = await api.post(`/cart/${DEVICE_ID}/item`, {
+          product_id: product.id,
+          quantity: product.selectedQuantity,
+          source: 'sensor',
+        })
+        latestCart = response.data.cart
+      }
+
+      if (latestCart) setCartProducts(normalizeCart(latestCart))
+      closeSensorModal()
+      const productCount = productsToAdd.reduce((total, product) => total + product.selectedQuantity, 0)
+      notify('success', `${productCount} ${productCount === 1 ? 'produto adicionado' : 'produtos adicionados'} ao carrinho.`)
     } catch (error) {
-      notify('error', apiErrorMessage(error, 'Nao foi possivel adicionar o produto.'))
+      notify('error', apiErrorMessage(error, 'Nao foi possivel adicionar os produtos selecionados.'))
     } finally {
       setSaving(false)
     }
@@ -808,11 +905,24 @@ function App() {
                     <span>Carregando produtos e sessao do carrinho.</span>
                   </div>
                 ) : cartProducts.length ? (
-                  <ul className="cart-list">
-                    {cartProducts.map((product) => (
-                      <CartItem key={product.id} product={product} onRemove={removeProduct} />
-                    ))}
-                  </ul>
+                  <>
+                    <ul className="cart-list">
+                      {visibleCartProducts.map((product) => (
+                        <CartItem key={product.id} product={product} onRemove={removeProduct} />
+                      ))}
+                    </ul>
+                    {cartProducts.length > CART_PAGE_SIZE && (
+                      <Pagination
+                        page={currentCartPage}
+                        totalPages={totalCartPages}
+                        totalItems={cartProducts.length}
+                        label="itens"
+                        className="cart-pagination"
+                        onPrev={() => setCartPage((page) => Math.max(1, page - 1))}
+                        onNext={() => setCartPage((page) => Math.min(totalCartPages, page + 1))}
+                      />
+                    )}
+                  </>
                 ) : (
                   <div className="empty-state">
                     <ShoppingCart size={44} />
@@ -1004,8 +1114,9 @@ function App() {
             <SensorModal
               products={sensorProducts}
               cartProducts={cartProducts}
-              onAdd={addProduct}
-              onClose={() => setSensorOpen(false)}
+              onConfirm={confirmSensorProducts}
+              onClose={closeSensorModal}
+              saving={saving}
             />
           )}
 
