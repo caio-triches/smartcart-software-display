@@ -89,14 +89,52 @@ class CartRepository
 
     public function addItem(int $sessionId, array $product, float $quantity, string $source): array
     {
-        $subtotal = round($product['price'] * $quantity, 2);
+        $this->db->beginTransaction();
 
-        $stmt = $this->db->prepare('
-            INSERT INTO cart_items (session_id, product_id, quantity, unit_price, subtotal, source)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ');
-        $stmt->execute([$sessionId, $product['id'], $quantity, $product['price'], $subtotal, $source]);
-        $this->refreshTotal($sessionId);
+        try {
+            $existingStmt = $this->db->prepare('
+                SELECT id, quantity
+                FROM cart_items
+                WHERE session_id = ? AND product_id = ?
+                ORDER BY id ASC
+            ');
+            $existingStmt->execute([$sessionId, $product['id']]);
+            $existingItems = $existingStmt->fetchAll();
+
+            if ($existingItems) {
+                $keeperId = (int) $existingItems[0]['id'];
+                $currentQuantity = array_reduce($existingItems, fn($total, $item) => $total + (float) $item['quantity'], 0.0);
+                $newQuantity = $currentQuantity + $quantity;
+                $subtotal = round($product['price'] * $newQuantity, 2);
+
+                $update = $this->db->prepare('
+                    UPDATE cart_items
+                    SET quantity = ?, unit_price = ?, subtotal = ?, source = ?
+                    WHERE id = ? AND session_id = ?
+                ');
+                $update->execute([$newQuantity, $product['price'], $subtotal, $source, $keeperId, $sessionId]);
+
+                $deleteDuplicates = $this->db->prepare('
+                    DELETE FROM cart_items
+                    WHERE session_id = ? AND product_id = ? AND id <> ?
+                ');
+                $deleteDuplicates->execute([$sessionId, $product['id'], $keeperId]);
+            } else {
+                $subtotal = round($product['price'] * $quantity, 2);
+
+                $stmt = $this->db->prepare('
+                    INSERT INTO cart_items (session_id, product_id, quantity, unit_price, subtotal, source)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ');
+                $stmt->execute([$sessionId, $product['id'], $quantity, $product['price'], $subtotal, $source]);
+            }
+
+            $this->refreshTotal($sessionId);
+            $this->db->commit();
+        } catch (Throwable $error) {
+            $this->db->rollBack();
+            throw $error;
+        }
 
         return $this->getCart($sessionId);
     }

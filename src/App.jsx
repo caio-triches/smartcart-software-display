@@ -17,8 +17,10 @@ import {
   Fish,
   Grape,
   Milk,
+  Minus,
   PackagePlus,
   Popcorn,
+  Plus,
   QrCode,
   ReceiptText,
   RefreshCcw,
@@ -276,6 +278,22 @@ function SensorModal({ products, cartProducts, onConfirm, onClose, saving }) {
     }))
   }
 
+  function decreaseProduct(productId) {
+    setSelectedQuantities((items) => {
+      const nextQuantity = (items[productId] ?? 0) - 1
+      if (nextQuantity <= 0) {
+        const nextItems = { ...items }
+        delete nextItems[productId]
+        return nextItems
+      }
+
+      return {
+        ...items,
+        [productId]: nextQuantity,
+      }
+    })
+  }
+
   function handleConfirm() {
     if (selectedTotal === 0) return
     onConfirm(selectedProducts)
@@ -313,7 +331,19 @@ function SensorModal({ products, cartProducts, onConfirm, onClose, saving }) {
                   <strong>{product.name}</strong>
                   <small>{selectedQuantity ? `${selectedQuantity}x selecionado` : added ? `${added} no carrinho` : product.category}</small>
                 </span>
-                <b>{BRL.format(product.price)}</b>
+                {selectedQuantity ? (
+                  <span className="sensor-quantity" onClick={(event) => event.stopPropagation()}>
+                    <button type="button" onClick={() => decreaseProduct(product.id)} aria-label={`Diminuir ${product.name}`}>
+                      <Minus size={14} />
+                    </button>
+                    <strong>{selectedQuantity}x</strong>
+                    <button type="button" onClick={() => increaseProduct(product.id)} aria-label={`Aumentar ${product.name}`}>
+                      <Plus size={14} />
+                    </button>
+                  </span>
+                ) : (
+                  <b>{BRL.format(product.price)}</b>
+                )}
               </button>
             )
           })}
@@ -400,6 +430,7 @@ function HistoryPanel({ sessions, orders, selectedHistory, loadingHistory, onRef
   const totalSessionPages = Math.max(1, Math.ceil(sessions.length / PAGE_SIZE))
   const currentSessionPage = Math.min(sessionPage, totalSessionPages)
   const visibleSessions = sessions.slice((currentSessionPage - 1) * PAGE_SIZE, currentSessionPage * PAGE_SIZE)
+  const detailItems = selectedHistory?.items ?? []
 
   return (
     <div className="history-grid">
@@ -418,7 +449,12 @@ function HistoryPanel({ sessions, orders, selectedHistory, loadingHistory, onRef
           <>
             <div className="history-list">
               {visibleSessions.map((session) => (
-                <button key={session.id} type="button" className="history-row" onClick={() => onOpenSession(session.id)}>
+                <button
+                  key={session.id}
+                  type="button"
+                  className="history-row"
+                  onClick={() => onOpenSession(session.id)}
+                >
                   <span className={`status-dot ${session.status}`} />
                   <span>
                     <strong>{session.deviceId}</strong>
@@ -453,7 +489,12 @@ function HistoryPanel({ sessions, orders, selectedHistory, loadingHistory, onRef
           </div>
           <div className="order-list">
             {recentOrders.length ? recentOrders.map((order) => (
-                <button key={order.id} type="button" className="order-row" onClick={() => onOpenOrder(order.id)}>
+                <button
+                  key={order.id}
+                  type="button"
+                  className="order-row"
+                  onClick={() => onOpenOrder(order.id)}
+                >
                   <span>
                     <strong>Pedido #{order.id}</strong>
                     <small>{order.paymentMethod.toUpperCase()} - {statusLabel(order.status)}</small>
@@ -476,10 +517,10 @@ function HistoryPanel({ sessions, orders, selectedHistory, loadingHistory, onRef
             <>
               <p className="detail-kicker">{selectedHistory.type === 'order' ? `Pedido #${selectedHistory.id}` : `Sessao #${selectedHistory.session?.id}`}</p>
               <div className="detail-items">
-                {(selectedHistory.items ?? []).map((item) => (
+                {detailItems.map((item) => (
                   <div key={`${item.id}-${item.productId}`} className="detail-item">
-                    <span>{item.name}</span>
-                    <strong>{formatHistoryQuantity(item)} - {BRL.format(item.subtotal)}</strong>
+                    <strong>{item.name}</strong>
+                    <span>{formatHistoryQuantity(item)} - {BRL.format(item.subtotal)}</span>
                   </div>
                 ))}
               </div>
@@ -635,6 +676,11 @@ function App() {
     setToasts((items) => items.filter((toast) => toast.context !== 'sensor'))
   }
 
+  function closeWeightModal() {
+    setWeightOpen(false)
+    setToasts((items) => items.filter((toast) => toast.context !== 'weight'))
+  }
+
   function confirmSensorProducts(productsToAdd) {
     if (productsToAdd.length === 0) {
       notify('error', 'Selecione pelo menos um produto.')
@@ -697,6 +743,35 @@ function App() {
     }
   }
 
+  function confirmWeightedProduct(product) {
+    const id = `${Date.now()}-${Math.random()}`
+    const message = `Deseja adicionar ${product.name} com ${formatQuantity(product)} ao carrinho?`
+
+    setToasts((items) => [
+      ...items,
+      {
+        id,
+        type: 'confirm',
+        context: 'weight',
+        message,
+        actions: [
+          {
+            label: 'Cancelar',
+            variant: 'ghost',
+            onClick: () => dismissToast(id),
+          },
+          {
+            label: 'Adicionar',
+            onClick: () => {
+              dismissToast(id)
+              addWeightedProduct(product)
+            },
+          },
+        ],
+      },
+    ].slice(-4))
+  }
+
   async function addWeightedProduct(product, options = {}) {
     if (saving) return
     setSaving(true)
@@ -708,7 +783,7 @@ function App() {
         source: 'scale',
       })
       setCartProducts(normalizeCart(response.data.cart))
-      setWeightOpen(false)
+      closeWeightModal()
       if (!options.silent) notify('success', `${product.name} adicionado com ${formatQuantity(product)}.`)
     } catch (error) {
       notify('error', apiErrorMessage(error, 'Nao foi possivel adicionar o item pesado.'))
@@ -1123,8 +1198,8 @@ function App() {
           {weightOpen && (
             <WeightModal
               products={weightedProducts}
-              onSubmit={addWeightedProduct}
-              onClose={() => setWeightOpen(false)}
+              onSubmit={confirmWeightedProduct}
+              onClose={closeWeightModal}
             />
           )}
 
